@@ -25,6 +25,7 @@ README.md
 docs/CHANGELOG.md
 docs/OUTBOUND-HEADER-AUDIT.md
 docs/TROUBLESHOOTING-11-128.md
+docs/TROUBLESHOOTING-10034.md
 dashboard.html
 console_tail.py
 ops/aliyun/install-updater.sh
@@ -97,6 +98,7 @@ wb_update_portable.py
 wb_update_request.py
 wb_upstream_pool.py
 wb_webagent.py
+wb_webcreate.py
 wb_webprompts.py
 wb_webtools.py
 wb_window_probe.py

@@ -8,14 +8,19 @@ mismatch。这一轮重试永远不可能成功，而成长连登只需要一条
 1. 国际版的活跃上报与连登查询都走它自己的 base（www.workbuddy.ai），不是国内 base；
 2. 网页腿证书校验失败且开关打开时，改走活跃上报并把当天算完成；
 3. 开关默认关，关着时行为与以前完全一致（仍如实报失败、不写 lastDailyChat）；
-4. 非证书类失败一律不降级，避免把「真的没跑完」也算成完成。
+4. 非证书类失败一律不降级，避免把「真的没跑完」也算成完成；
+5. 上游按账号类型关上建会话的门（code 10034，2026-11-16）属于同一类「同一天再
+   试也不会变」，开关打开时同样降级；但普通 401（token 失效）不是它，不能把
+   凭证问题静默算成完成。
 
 Run with: python tests/run_all.py daily_chat_activity_fallback
 """
+import io
 import json
 import os
 import sys
 import unittest
+import urllib.error
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from _isolated_dirs import isolated_data_dirs  # noqa: E402  (its own data root)
@@ -251,6 +256,105 @@ class FallbackTests(StubCase):
 
         self.assertFalse(res.get("ok"), res)
         self.assertIn("international", res.get("error") or "")
+
+
+GATE_BODY = {"code": 10034,
+             "msg": "CreateConversation: 10034:CODEBUDDY_API_KEY is required "
+                    "but could not be found"}
+STALE_BODY = {"code": 11140, "msg": "账号存在异常行为，已被限制使用"}
+
+
+class GateStubCase(StubCase):
+    """Stub where the *create* call is refused instead of the turn failing."""
+
+    def install_gate(self, payload=GATE_BODY, status=401, report_ok=True, streak=3):
+        self.reported = []
+        real_urlopen = wb_accounts.urlopen
+        real_events = wb_tasks.report_events
+        real_streak = wb_tasks.fetch_streak_days
+
+        def fake(req, **_kwargs):
+            if req.get_method() == "POST" and "conversations" in req.full_url:
+                raise urllib.error.HTTPError(
+                    req.full_url, status, "Unauthorized", {},
+                    io.BytesIO(json.dumps(payload).encode("utf-8")))
+            return Response({"code": 0, "msg": "OK",
+                             "data": {"conversations": []}})
+
+        def fake_events(account, events, base=None):
+            self.reported.append({"uid": account.uid, "base": base})
+            return report_ok
+
+        wb_accounts.urlopen = fake
+        wb_tasks.report_events = fake_events
+        wb_tasks.fetch_streak_days = lambda account: streak
+        self.addCleanup(setattr, wb_accounts, "urlopen", real_urlopen)
+        self.addCleanup(setattr, wb_tasks, "report_events", real_events)
+        self.addCleanup(setattr, wb_tasks, "fetch_streak_days", real_streak)
+
+
+class GateFallbackTests(GateStubCase):
+    def test_the_gate_falls_back_when_the_switch_is_on(self):
+        """开关打开：上游按账号类型拒绝建会话时，用活跃上报点亮连登。"""
+        directory = make_dir("gate-on")
+        wb_settings.set_daily_chat_web_fallback_activity(directory, True)
+        acc = make_account(directory)
+        self.install_gate()
+
+        res = acc.daily_chat(web=True)
+
+        self.assertTrue(res.get("ok"), res)
+        self.assertIn("10034", res.get("msg") or "")
+        self.assertIn("回退", res.get("msg") or "")
+        self.assertNotIn("网页通道失败", res.get("error") or "")
+        self.assertEqual(len(self.reported), 1)
+        self.assertTrue(res.get("web_fallback", {}).get("ok"), res)
+        self.assertTrue(acc.last_daily_chat)
+        self.assertFalse(acc.can_daily_chat())
+
+    def test_the_switch_being_off_reports_the_gate_plainly(self):
+        """默认关：如实报「上游收紧」这一句，不写 lastDailyChat。"""
+        directory = make_dir("gate-off")
+        acc = make_account(directory)
+        self.install_gate()
+
+        res = acc.daily_chat(web=True)
+
+        self.assertFalse(res.get("ok"), res)
+        self.assertIn("10034", res.get("msg") or "")
+        self.assertIn("不需要重新登录", res.get("msg") or "")
+        self.assertNotIn("已重试", res.get("msg") or "")
+        self.assertEqual(self.reported, [])
+        self.assertNotIn("web_fallback", res)
+        self.assertIsNone(acc.last_daily_chat)
+        self.assertTrue(acc.can_daily_chat())
+
+    def test_a_rejected_report_keeps_the_gate_day_open(self):
+        directory = make_dir("gate-rejected")
+        wb_settings.set_daily_chat_web_fallback_activity(directory, True)
+        acc = make_account(directory)
+        self.install_gate(report_ok=False)
+
+        res = acc.daily_chat(web=True)
+
+        self.assertFalse(res.get("ok"), res)
+        self.assertEqual(len(self.reported), 1)
+        self.assertIsNone(acc.last_daily_chat)
+        self.assertTrue(acc.can_daily_chat())
+
+    def test_a_stale_token_is_not_swallowed_as_a_gate(self):
+        """普通 401 是凭证问题，开关打开也不能把它算成「今天做完了」。"""
+        directory = make_dir("gate-stale-token")
+        wb_settings.set_daily_chat_web_fallback_activity(directory, True)
+        acc = make_account(directory)
+        self.install_gate(payload=STALE_BODY)
+
+        res = acc.daily_chat(web=True)
+
+        self.assertFalse(res.get("ok"), res)
+        self.assertIn("网页通道失败", res.get("msg") or "")
+        self.assertEqual(self.reported, [])
+        self.assertIsNone(acc.last_daily_chat)
 
 
 if __name__ == "__main__":

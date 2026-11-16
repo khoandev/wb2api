@@ -114,6 +114,16 @@ services:
 
 更新镜像：`docker compose pull && docker compose up -d`。
 
+> **本仓库分支镜像 / This branch's own image**：本仓库（fork）的 CI 每次推送 `master` / `main` 都会构建
+> `linux/amd64` + `linux/arm64` 多架构镜像并推送到自己的 GHCR —— `ghcr.io/khoandev/wb2api:latest`（同时打
+> `sha-<短哈希>`）。把上面的 `image:` 换成它即可运行本分支的代码；工作流见
+> `.github/workflows/docker-ghcr.yml`，镜像路径取自 `GITHUB_REPOSITORY`，换 owner / 改名都不用改 CI。
+> GHCR 新包默认私有，要免登录拉取需在 Packages 设置里改为 Public。
+> / Every push to `master` / `main` here builds and pushes a multi-arch image to this fork's own GHCR —
+> `ghcr.io/khoandev/wb2api:latest` (plus `sha-<short>`). Point the `image:` above at it to run this branch's
+> code. The image path comes from `GITHUB_REPOSITORY`, so a rename or transfer needs no workflow edit. A fresh
+> GHCR package is private by default — switch it to Public in the package settings for anonymous pulls.
+
 Docker 镜像在构建阶段已经编译好当前架构的 Go/uTLS 桥，容器内不需要 Go。
 未设置 `WB_TLS_FINGERPRINT` 时默认 `auto`；如需彻底关闭桥，可加
 `- WB_TLS_FINGERPRINT=python`，卷中的账号、设置和用量不会因此改变。
@@ -255,7 +265,7 @@ python tests/run_all.py            # 全部套件
 python tests/run_all.py realm      # 只跑名字里含 realm 的
 ```
 
-- 314 个套件：234 个 Python + 80 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 316 个套件：236 个 Python + 80 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - `tests/_mobile_check.py` 是独立的 Playwright 手机/桌面布局检查器（需自行安装 Playwright），按需手动运行，不在上面的套件集里。
 - `tests/_visual_recent.py` 是同一类手动检查器：用合成 fixture 起一份 1480 宽的「请求列表」，验证失败徽章点开的详情弹窗、四个过滤下拉真的把参数发到 `/usage/recent`，并把列表 / 弹窗 / 筛选条截图写到系统临时目录的 `wb-visual-recent/`。
 - CI（`.github/workflows/tests.yml`）跑同一条命令：Ubuntu 上 python 3.9 与 3.12（3.9 是本项目声称的最低版本），Windows 上 python 3.12；推送 `v*` tag 时额外断言 **tag == 源码版本**（`-ci` 演练 tag 豁免）。
@@ -265,6 +275,13 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 ## 七、版本更新记录 (Changelog)
 
 本版更新与完整历史版本请查阅 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+
+### Unreleased
+
+- **网页通道 10034（CODEBUDDY_API_KEY）按「上游收紧」处理**：国际版每日活跃在网页通道建会话时，上游会按账号类型拒绝（`401` / `code 10034`，OAuth 免费号没有 CODEBUDDY_API_KEY）。网关现在只试一次，不再把预算花在重试和逐个候选模型上，也不写 `lastDailyChat`、不打封禁标记、不触发重新登录；面板提示改为「网页通道被上游收紧（code 10034：需要 CODEBUDDY_API_KEY）：与账号状态无关，不需要重新登录」。默认关闭的降级开关同时覆盖这类失败（设置页「网页通道不可恢复时改走活跃上报」）：打开时改走活跃上报点亮连登，但**不发每日活跃积分**；普通 `401`（token 失效）与 `403 / 11140`（封禁）不降级。另新增 `wb_webcreate.py`（建会话请求形态矩阵）与 `scripts/probe_web_conversation.py`（read-only / probe / dry-run 排障脚本，探测时创建的会话会 stop+delete），用法见 [docs/TROUBLESHOOTING-10034.md](docs/TROUBLESHOOTING-10034.md)。2026-11-16 实测 probe 里 baseline 形态仍被上游接受，所以默认请求字节未变，只有失败时才换形状。 / The international daily activity's web conversation can now be refused by account type (`401` / `code 10034`: an OAuth-only account has no CODEBUDDY_API_KEY). The gateway tries once, stops spending the budget on retries and candidate models, writes no `lastDailyChat`, sets no ban flag and triggers no re-login, and reports the cause instead of an HTTP status. The existing off-by-default fallback switch now covers this refusal too (panel: "report activity when the web channel cannot recover"): it keeps the streak but **grants no daily activity credits**, and a plain `401` (stale token) or `403` / `11140` (ban) is never downgraded. New: `wb_webcreate.py` (request-shape matrix) and `scripts/probe_web_conversation.py` (read-only / probe / dry-run, releases the conversations it creates) — see [docs/TROUBLESHOOTING-10034.md](docs/TROUBLESHOOTING-10034.md). A 2026-11-16 probe found the baseline shape accepted, so the default request is byte-identical; shapes are only tried after a refusal.
+- **推送即构建镜像的 GitHub Actions**
+***：新增 `.github/workflows/docker-ghcr.yml`，每次推送 `master` / `main` 自动构建 `linux/amd64` + `linux/arm64` 多架构镜像并推送到本仓库自己的 GHCR 命名空间（`ghcr.io/<owner>/<repo>`，owner 与 repo 取自 `GITHUB_REPOSITORY`，不写死账号），分支推送打 `latest` 与 `sha-<短哈希>`，也支持手动 `workflow_dispatch`。推送 `latest` 不受 release 流程影响，`docker-publish.yml` 的行为保持不变；GHCR 新包默认私有，要免登录拉取需在 Packages 设置里改为 Public。 / A new GitHub Actions workflow (`.github/workflows/docker-ghcr.yml`) builds and pushes a multi-arch (amd64 + arm64) image to this repository's own GHCR namespace on every push to `master` / `main`. The owner and repository come from `GITHUB_REPOSITORY`, so nothing is hardcoded; branch pushes are tagged `latest` plus `sha-<short>`, and manual `workflow_dispatch` works too. It does not change the release flow in `docker-publish.yml`. A fresh GHCR package is private by default — switch it to Public in the package settings for anonymous pulls.
+
 ### v2.2.0
 
 - **合并上游 v2.0.4 – v2.1.3**：Key 级日 token 限量与并发有界排队、请求列表服务端筛选与失败详情、CodeArts 积分差值结算与并发占位排队、工具 Schema 关键字类型纠偏、运营活动任务自动化（星巴克 / 记者节）、真实技能分享与模板真实场景、WB_MSGSTAT_SHARDS 单发亲和键等。

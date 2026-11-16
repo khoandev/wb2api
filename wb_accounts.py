@@ -23,6 +23,7 @@ import wb_settings
 import wb_tiers
 import wb_upstream_pool
 import wb_webagent
+import wb_webcreate
 import wb_webprompts
 
 # ---------------------------------------------------------------------------
@@ -211,6 +212,48 @@ def is_tls_verify_text(text):
     if not text:
         return False
     return is_tls_verify_error(TLSVerifyError(str(text)))
+
+
+#: Upstream gate on the web-console create (2026-11-16): the conversation
+#: service answers 401 / code 10034 when it cannot resolve a CODEBUDDY_API_KEY,
+#: which an OAuth-only free account has never had. Nothing about the credential
+#: is wrong — it is the *create* call that now wants a key — and the same request
+#: cannot start working by being sent again, so this is terminal, not retryable.
+WEB_CREATE_GATE_CODE = 10034
+WEB_CREATE_GATE = "codebuddy-api-key"
+WEB_CREATE_GATE_MARKER = "codebuddy_api_key"
+
+
+def web_create_gate(status, detail):
+    """Whether a create failure is the 10034 CODEBUDDY_API_KEY gate.
+
+    Kept apart from ``_daily_chat_model_fallback_allowed``: a 401 from a stale
+    token has to keep meaning "the credential is broken" (re-login), while this
+    one only says the upstream wants a different kind of account.
+    """
+    try:
+        status = int(status or 0)
+    except (TypeError, ValueError):
+        return False
+    if status not in (401, 403):
+        return False
+    text = str(detail or "")
+    try:
+        payload = json.loads(text)
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        if payload.get("code") == WEB_CREATE_GATE_CODE:
+            return True
+        text = "%s %s" % (payload.get("code"), payload.get("msg") or "")
+    return WEB_CREATE_GATE_MARKER in text.lower()
+
+
+def web_create_gate_message():
+    """What the operator reads when the upstream refuses OAuth-only accounts."""
+    return ("网页通道被上游收紧（code 10034：需要 CODEBUDDY_API_KEY）："
+            "与账号状态无关，不需要重新登录；请换用带 API Key 的账号，"
+            "或等上游恢复")
 
 
 def _retryable(exc):
@@ -2656,13 +2699,9 @@ class Account(object):
             return {"ok": False, "retryable": False,
                     "error": "没有可用的每日活跃候选模型"}
         chosen_prompt = prompt or self.daily_chat_web_prompt()
-        body = {
-            "prompt": chosen_prompt,
-            "model": model,
-            # 网页端建会话时固定带上这两项（抓包所得），保持请求形态一致。
-            "conversationOrigin": "workbuddy-app",
-            "plugins": [{"name": "weixinpay", "marketplace": "codebuddy-builtin"}],
-        }
+        # The #90 web-app shape lives in wb_webcreate, together with the probe
+        # overlays that are only tried once the baseline is refused (10034).
+        body = wb_webcreate.baseline_body(chosen_prompt, model)
         conversation, failure = self._web_conversation_create(body)
         if failure and failure.get("limit"):
             # 账号攒满了活跃会话：老版本每跑一次就漏一条、从不清尾，十天后连建都
@@ -2681,9 +2720,17 @@ class Account(object):
                                     WEB_ORIGIN.replace("https://", "")),
                         "retryable": False}
         if failure:
-            return {"ok": False, "error": failure.get("message") or "建会话失败",
-                    "retryable": bool(failure.get("retryable")),
-                    "phase": "create"}
+            result = {"ok": False,
+                      "error": failure.get("message") or "建会话失败",
+                      "retryable": bool(failure.get("retryable")),
+                      "phase": "create"}
+            if failure.get("gate"):
+                # Terminal by nature: the upstream wants a kind of account this
+                # one is not. Say so instead of dressing it up as an HTTP error.
+                result["gate"] = failure["gate"]
+                result["code"] = failure.get("code")
+                result["error"] = web_create_gate_message()
+            return result
 
         keep = False
         # 建出来就先登记：万一这一轮卡在 socket 上走不到 finally，别的线程还能
@@ -2893,7 +2940,9 @@ class Account(object):
         """建一条网页会话；返回 (会话 id, 失败信息)。
 
         失败信息是 {"message": ..., "retryable": bool, "limit": bool}，limit 表示
-        「活跃会话已满」——调用方会先清理再重试一次。
+        「活跃会话已满」——调用方会先清理再重试一次。gate 非空表示上游按账号类型
+        关上了这道门（见 web_create_gate）：同一请求再发不会变、也不该让调用方按
+        「重试」或「重新登录」去理解它。
         """
         req = urllib.request.Request(
             WEB_CONVERSATIONS_URL,
@@ -2907,9 +2956,14 @@ class Account(object):
                 detail = exc.read().decode("utf-8", "replace")
             except Exception:
                 detail = str(exc)
-            return None, {"message": "HTTP %d: %s" % (exc.code, detail[:120]),
-                          "retryable": exc.code >= 500 or exc.code in (408, 429),
-                          "limit": _active_conversation_limit(exc.code, detail)}
+            failure = {"message": "HTTP %d: %s" % (exc.code, detail[:120]),
+                       "retryable": exc.code >= 500 or exc.code in (408, 429),
+                       "limit": _active_conversation_limit(exc.code, detail)}
+            if web_create_gate(exc.code, detail):
+                failure["retryable"] = False
+                failure["gate"] = WEB_CREATE_GATE
+                failure["code"] = WEB_CREATE_GATE_CODE
+            return None, failure
         except Exception as exc:
             return None, {"message": str(exc), "retryable": True, "limit": False}
         if not isinstance(payload, dict):
@@ -2925,9 +2979,14 @@ class Account(object):
                     "credit", "quota", "limit", "model not found",
                     "no such model", "invalid model", "额度", "积分",
                     "限流", "不存在"))
-            return None, {"message": "code=%s msg=%s" % (payload.get("code"),
-                                                         payload.get("msg")),
-                          "retryable": retryable, "limit": False}
+            failure = {"message": "code=%s msg=%s" % (payload.get("code"),
+                                                      payload.get("msg")),
+                       "retryable": retryable, "limit": False}
+            if code == WEB_CREATE_GATE_CODE:
+                failure["retryable"] = False
+                failure["gate"] = WEB_CREATE_GATE
+                failure["code"] = WEB_CREATE_GATE_CODE
+            return None, failure
         return conversation, None
 
     def daily_chat(self, web=None, trigger="unknown"):
@@ -3079,24 +3138,41 @@ class Account(object):
                 tries = res.get("attempts") or 1
                 suffix = "（已重试 %d 次）" % (tries - 1) if tries > 1 else ""
                 result["ok"] = False
-                result["error"] = "网页通道失败：%s%s" % (
-                    res.get("error"), suffix)
-                result["msg"] = "每日活跃对话未完成（网页通道失败：%s%s）" % (
-                    res.get("error"), suffix)
-                # 证书失败改走活跃上报：默认关闭，打开时只对证书类错误生效。
+                if res.get("gate"):
+                    # The upstream refuses OAuth-only accounts on create (10034).
+                    # There is nothing to retry and no credential to renew, so the
+                    # message carries the cause instead of an HTTP status.
+                    result["gate"] = res.get("gate")
+                    result["error"] = res.get("error")
+                    result["msg"] = "每日活跃对话未完成（%s）" % res.get("error")
+                else:
+                    result["error"] = "网页通道失败：%s%s" % (
+                        res.get("error"), suffix)
+                    result["msg"] = "每日活跃对话未完成（网页通道失败：%s%s）" % (
+                        res.get("error"), suffix)
+                # 不可恢复的网页通道失败改走活跃上报：默认关闭。两类都算「同一天
+                # 再试也不会变」——证书校验失败（#645），以及上游按账号类型关上
+                # 建会话的门（code 10034，见 web_create_gate）。
                 fallback_on = (bool(self.path)
                                and wb_settings.daily_chat_web_fallback_activity(
                                    os.path.dirname(self.path)))
-                if fallback_on and is_tls_verify_text(res.get("error")):
+                if fallback_on and (is_tls_verify_text(res.get("error"))
+                                    or res.get("gate")):
                     fb = self.report_activity()
                     result["web_fallback"] = fb
                     if fb.get("ok"):
                         web_ok = True
                         result["ok"] = True
                         result.pop("error", None)
+                        if res.get("gate"):
+                            cause = ("网页通道被上游收紧（code %s）"
+                                     % (res.get("code") or WEB_CREATE_GATE_CODE))
+                        else:
+                            cause = "网页通道证书校验失败"
                         result["msg"] = (
-                            "每日活跃对话：网页通道证书校验失败，已回退对话活跃上报（%s）"
-                            % (fb.get("msg") or ""))
+                            "每日活跃对话：%s，已回退对话活跃上报"
+                            "（%s；只点亮连登，不含积分）"
+                            % (cause, fb.get("msg") or ""))
         if web_ok:
             self.last_daily_chat = time.strftime("%Y-%m-%d %H:%M:%S")
             if self.path and os.path.exists(os.path.dirname(self.path)):

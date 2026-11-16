@@ -465,7 +465,7 @@ const posts = () => calls.filter(c => c.method === 'POST');
         body.daily_chat_web_retry_backoff === 7, JSON.stringify(body));
   check('提交启动补跑开关', body.daily_chat_startup_catchup === false, JSON.stringify(body));
   check('提交每日活跃总开关', body.daily_activity === false, JSON.stringify(body));
-  check('提交证书失败改走活跃上报开关',
+  check('提交网页通道不可恢复时改走活跃上报开关',
         body.daily_chat_web_fallback_activity === true, JSON.stringify(body));
   check('设置页模块保存不再提交优先 Flash 开关',
         !('daily_chat_prefer_flash' in body), JSON.stringify(body));
@@ -491,7 +491,7 @@ const posts = () => calls.filter(c => c.method === 'POST');
         Array.isArray(resetBody.daily_chat_models) && resetBody.daily_chat_models.length === 0 &&
         resetBody.schedule && resetBody.schedule.daily_chat.length === 0,
         JSON.stringify(resetBody));
-  check('推荐值关闭证书失败改走活跃上报',
+  check('推荐值关闭网页通道不可恢复时改走活跃上报',
         resetBody.daily_chat_web_fallback_activity === false, JSON.stringify(resetBody));
   check('设置页恢复推荐值不再改动优先 Flash 开关',
         !('daily_chat_prefer_flash' in resetBody), JSON.stringify(resetBody));

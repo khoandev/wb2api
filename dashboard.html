@@ -3780,7 +3780,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '定时自动打卡': 'scheduled check-in',
     '关闭后调度器不再自动打卡（定时、启动补跑、立即巡检保活都跳过）；账号上的手动打卡不受影响': 'When off, the scheduler no longer runs the check-in (scheduled slots, startup catch-up and the keep-alive check-now all skip it); the manual check-in on each account still works',
     '走网页通道': 'use the web channel',
-    '证书失败改走活跃上报': 'report activity when the certificate fails',
+    '网页通道不可恢复时改走活跃上报': 'report activity when the web channel cannot recover',
     '活跃使用的模型': 'Model for the daily activity',
     '(已指定)': '(set)',
     '（免费 0.00x）': ' (free 0.00x)',
@@ -4269,7 +4269,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     "已启用：国际版打卡走网页通道": "已啟用：國際版打卡走網頁通道",
     "定时自动打卡": "定時自動打卡",
     "关闭后调度器不再自动打卡（定时、启动补跑、立即巡检保活都跳过）；账号上的手动打卡不受影响": "關閉後排程器不再自動打卡（定時、啟動補跑、立即巡檢保活都跳過）；帳號上的手動打卡不受影響",
-    "证书失败改走活跃上报": "憑證失敗改走活躍上報",
+    "网页通道不可恢复时改走活跃上报": "網頁通道無法恢復時改走活躍上報",
     "失败重试": "失敗重試",
     "最多尝试次数": "最多嘗試次數",
     "首轮等待": "首輪等待",
@@ -7598,7 +7598,7 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
             </label>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
               <input id="setDailyChatActivityFallback" type="checkbox" style="width:16px;height:16px">
-              证书失败改走活跃上报
+              网页通道不可恢复时改走活跃上报
               <em id="setDailyChatActivityFallbackState" style="font-style:normal;font-size:12px;color:var(--dim)"></em>
             </label>
           </div>
