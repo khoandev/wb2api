@@ -71,6 +71,8 @@ desktop.ini
 .vscode/
 .idea/
 .codebuddy/
+# codegraph 的本地索引（SQLite + unix socket），只属于开发者本机
+.codegraph/
 
 # Local Docker Compose override
 docker-compose.override.yml

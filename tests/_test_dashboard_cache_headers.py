@@ -63,10 +63,27 @@ def rendered(disk_bytes, language):
 port = life.free_port()
 work = tempfile.mkdtemp(prefix="dashcache_")
 tree = os.path.join(work, "gateway")
+def copy_ignore(directory, names):
+    """Skip caches, test sources and the developer's local tooling state.
+
+    A hard-coded name list is not enough: copytree also walks whatever tooling a
+    checkout happens to hold, and some of it cannot be copied at all - a
+    codegraph index contains a unix socket, so the copy dies with
+    `Errno 102 Operation not supported on socket` and this suite goes red for a
+    reason that has nothing to do with the dashboard. Top-level dot entries
+    (.git, .github, .codegraph, .venv ...) and __pycache__ are never needed to
+    serve the panel.
+    """
+    skip = set(name for name in names
+               if name == "__pycache__" or name.startswith("."))
+    if os.path.abspath(directory) == ROOT:
+        skip.add("tests")
+    return skip
+
+
 # 整棵源码树复制到临时目录（跳过测试和缓存）：网关从 __file__ 旁边读
 # dashboard.html，只有副本才能随便改写、甚至删掉，去验 500 分支。
-shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(
-    "__pycache__", ".git", ".github", "tests"))
+shutil.copytree(ROOT, tree, ignore=copy_ignore)
 store = os.path.join(work, "accounts")
 os.makedirs(store)
 settings_path = os.path.join(store, "settings.json")
