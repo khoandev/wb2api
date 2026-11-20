@@ -259,6 +259,27 @@ class ManifestTests(unittest.TestCase):
         listed = set(tools.read_manifest())
         self.assertEqual([n for n in on_disk if n not in listed], [])
 
+    def test_every_local_subpackage_is_listed(self):
+        # `wb_*.py` globbing skips directories, so a package like
+        # wb_webgateway/ (imported by wb_proxy) would silently miss the ZIP and
+        # fail with ModuleNotFoundError on a user's machine.
+        on_disk = sorted(
+            os.path.relpath(p, ROOT).replace(os.sep, "/")
+            for p in glob.glob(os.path.join(ROOT, "wb_*", "**", "*.py"), recursive=True))
+        self.assertTrue(on_disk, "仓库里没有 wb_*/ 子包？")
+        listed = set(tools.read_manifest())
+        self.assertEqual([n for n in on_disk if n not in listed], [])
+
+    def test_docker_image_copies_local_subpackages(self):
+        # The image copies `wb_*.py`, which cannot match a package directory;
+        # each one needs its own COPY or the container starts without it.
+        text = read("Dockerfile")
+        dirs = sorted(os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "wb_*"))
+                      if os.path.isdir(p))
+        self.assertTrue(dirs, "仓库里没有 wb_*/ 子包？")
+        for name in dirs:
+            self.assertIn("COPY %s " % name, text)
+
     def test_launchers_and_dashboard_are_listed(self):
         listed = tools.read_manifest()
         for name in ("dashboard.html", "console_tail.py", "wb_proxy.py", "README.md", "LICENSE",

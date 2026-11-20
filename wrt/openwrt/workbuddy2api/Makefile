@@ -99,6 +99,10 @@ endef
 define Package/workbuddy2api/install
 	$(INSTALL_DIR) $(1)/usr/lib/workbuddy2api
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/usr/lib/workbuddy2api/wb_*.py $(1)/usr/lib/workbuddy2api/
+	for d in $(PKG_BUILD_DIR)/usr/lib/workbuddy2api/wb_*/; do \
+		[ -d "$$d" ] || continue; \
+		$(CP) "$$d" $(1)/usr/lib/workbuddy2api/; \
+	done
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/usr/lib/workbuddy2api/dashboard.html $(1)/usr/lib/workbuddy2api/
 	[ -z "$(BRIDGE_BINS)" ] || { \
 		$(INSTALL_DIR) $(1)/usr/lib/workbuddy2api/bin; \

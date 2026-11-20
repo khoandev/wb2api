@@ -195,6 +195,12 @@ mkdir -p "$DST"
 for f in "$APP_SRC"/wb_*.py; do
 	cp "$f" "$DST/"
 done
+# 本地子包（例如 wb_webgateway/）不是 wb_*.py 能匹配的，按目录整包带走，
+# 否则运行时 import 失败、网页工具网关静默关闭。
+for d in "$APP_SRC"/wb_*/; do
+	[ -d "$d" ] || continue
+	cp -R "$d" "$DST/"
+done
 cp "$APP_SRC/dashboard.html" "$DST/"
 if [ -n "$BRIDGE_DIR" ]; then
 	mkdir -p "$DST/bin"

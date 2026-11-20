@@ -296,6 +296,13 @@ install_file "$PKG/files/usr/bin/workbuddy2api-warm"   "$DATA" usr/bin/workbuddy
 for _f in "$APP_SRC"/wb_*.py; do
 	install_file "$_f" "$DATA" "usr/lib/workbuddy2api/$(basename "$_f")" 0644
 done
+# 本地子包（例如 wb_webgateway/）按目录递归收，wb_*.py 匹配不到目录。
+for _d in "$APP_SRC"/wb_*/; do
+	[ -d "$_d" ] || continue
+	find "$_d" -name '*.py' -type f | while IFS= read -r _f; do
+		install_file "$_f" "$DATA" "usr/lib/workbuddy2api/${_f#"$APP_SRC"/}" 0644
+	done
+done
 install_file "$APP_SRC/dashboard.html" "$DATA" usr/lib/workbuddy2api/dashboard.html 0644
 if [ "$BRIDGE_MODE" = none ]; then
 	echo "    uTLS bridge: 未包含（运行时为 auto，缺桥会回退 Python/OpenSSL）"
