@@ -255,6 +255,9 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 | 视频状态 | `GET` | `/v1/videos/<id>` | 轮询视频生成进度与结果 |
 | 产物下载 | `GET` | `/v1/videos/<id>/content` | 下载视频 MP4 产物直链 |
 | 健康检查 | `GET` | `/health` | 网关运行状态、可用账号数与就绪模型分布 |
+| 创建账号授权请求 | `POST` | `/v1/accounts/authorize` | 按 `realm=cn` 或 `intl` 生成一次性浏览器授权链接 |
+| 查询授权状态 | `GET` | `/v1/accounts/authorize/<request_id>` | 查询浏览器登录结果；成功后账号自动写入账号列表 |
+| 读取账号列表 | `GET` | `/v1/accounts?realm=cn\|intl` | 返回指定版本的脱敏账号列表 |
 
 ---
 
@@ -265,7 +268,7 @@ python tests/run_all.py            # 全部套件
 python tests/run_all.py realm      # 只跑名字里含 realm 的
 ```
 
-- 316 个套件：236 个 Python + 80 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 320 个套件：239 个 Python + 81 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - `tests/_mobile_check.py` 是独立的 Playwright 手机/桌面布局检查器（需自行安装 Playwright），按需手动运行，不在上面的套件集里。
 - `tests/_visual_recent.py` 是同一类手动检查器：用合成 fixture 起一份 1480 宽的「请求列表」，验证失败徽章点开的详情弹窗、四个过滤下拉真的把参数发到 `/usage/recent`，并把列表 / 弹窗 / 筛选条截图写到系统临时目录的 `wb-visual-recent/`。
 - CI（`.github/workflows/tests.yml`）跑同一条命令：Ubuntu 上 python 3.9 与 3.12（3.9 是本项目声称的最低版本），Windows 上 python 3.12；推送 `v*` tag 时额外断言 **tag == 源码版本**（`-ci` 演练 tag 豁免）。
@@ -277,6 +280,12 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 本版更新与完整历史版本请查阅 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ### Unreleased
+
+- **网页工具安全修正**：Responses 与 Anthropic 多轮网页工具都会继承 API Key 的账号白名单；WorkBuddy `/agenttool` 不再跟随重定向，避免账号鉴权头被发送到其他主机。
+- **网页工具网关（搜索 / 抓取 / 搜索+抓取）**：新增三个能力端点 `/v1/tools/search`、`/v1/tools/fetch`、`/v1/tools/search_fetch`，以及三个伪模型 `wb-search` / `wb-fetch` / `wb-search-fetch`——它们出现在 `/v1/models`，用 API key 经 `/v1/chat/completions` 或 `/v1/messages` 独立调用，不消耗上游模型额度。搜索后端可在「WorkBuddy 官方 `/agenttool`」与「本地多引擎链」之间多选，抓取后端同理；元宝走账号池，支持全池轮换、按区域限定与指定账号。协议层：Anthropic Messages 支持 `web_search_20250305` 的原生多轮执行（模型自己决定搜什么，网关执行后回填 `server_tool_use` / `web_search_tool_result` 与 `usage.server_tool_use.web_search_requests`）；OpenAI Responses 的执行器改接同一套 provider，事件序列不变；Gemini 的 `googleSearch` 走预检索并回填 `groundingMetadata`。默认关闭（`web_gateway.enabled`），关闭时行为与 v2.1.3 完全一致；`local_web_tools=true` 的既有部署仍走原来的 Responses 代跑路径。 / **Web tool gateway (search / fetch / search+fetch)**: three capability endpoints (`/v1/tools/search`, `/v1/tools/fetch`, `/v1/tools/search_fetch`) plus three pseudo models (`wb-search`, `wb-fetch`, `wb-search-fetch`) that are listed in `/v1/models` and called independently with an API key through `/v1/chat/completions` or `/v1/messages` without spending upstream model credits. Search backends are multi-select between WorkBuddy's own `/agenttool` API and the local multi-engine chain; fetch backends work the same way. The WorkBuddy backend runs on the account pool with whole-pool rotation, realm selection or a specific account list. Protocol layer: Anthropic Messages gets native multi-round `web_search_20250305` (the model decides what to search, the gateway executes and fills in `server_tool_use` / `web_search_tool_result` and `usage.server_tool_use.web_search_requests`); OpenAI Responses routes its executor through the same providers with an unchanged event sequence; Gemini's `googleSearch` runs a pre-search and fills `groundingMetadata`. Off by default (`web_gateway.enabled`); when off the behaviour is exactly v2.1.3, and deployments with `local_web_tools=true` keep the original Responses path.
+- **修复「工具结果早于工具调用」导致的 11148**：Codex / ccswitch 经 `/v1/responses` 重放历史时，个别会话把 `function_call_output` 排在 `function_call` 之前；转成 chat 消息后就是 `[tool, assistant(tool_calls)]`，上游按顺序配对，读成「调用没有结果、结果没有调用」，整轮返回 400 / code 11148，会话作废。新的 `reorder_early_tool_results()` 在出站前把这类结果移到对应 call 之后；`merge_adjacent_tool_calls()` 同时放宽为允许带文本的相邻批次合并（文本与 reasoning 一并保留）（只改顺序，id 唯一所以无损），接在 `merge_adjacent_tool_calls` 之后、`repack_tool_result_blocks` 之前；孤儿调用 / 孤儿结果仍由原逻辑清理。 / Fix 11148 when a tool result arrives before its call: some Codex histories replayed through `/v1/responses` list `function_call_output` before `function_call`, leaving the chat body as `[tool, assistant(tool_calls)]`; the upstream pairs by order and rejects the turn with 400 / code 11148. A new `reorder_early_tool_results()` moves such results behind their call before the body leaves (order only, ids are unique so nothing is lost), between `merge_adjacent_tool_calls` and `repack_tool_result_blocks`; orphan calls and results keep the existing cleanup.
+- **重启后立即刷新一次积分**（#1）：积分刷新器首轮只等待 20 秒，之后恢复配置间隔，避免重启后最长 30 分钟一直显示旧快照与本地估算。 / Refresh credits shortly after startup, then resume the configured interval.
+- **外部账号接口与接口管理**（#8）：新增独立外部 API Key、`account:auth` / `account:read` scope、浏览器授权链接与脱敏账号列表；新增「接口」页面、调用记录分页和动态请求示例。密钥与网关 Key 隔离，密钥文件权限为 `0600`，删除后不能通过旧页面快照恢复，外部接口不返回内部异常。 / Add scoped external account APIs and a panel for key management, call records and API examples.
 
 - **网页通道 10034（CODEBUDDY_API_KEY）按「上游收紧」处理**：国际版每日活跃在网页通道建会话时，上游会按账号类型拒绝（`401` / `code 10034`，OAuth 免费号没有 CODEBUDDY_API_KEY）。网关现在只试一次，不再把预算花在重试和逐个候选模型上，也不写 `lastDailyChat`、不打封禁标记、不触发重新登录；面板提示改为「网页通道被上游收紧（code 10034：需要 CODEBUDDY_API_KEY）：与账号状态无关，不需要重新登录」。默认关闭的降级开关同时覆盖这类失败（设置页「网页通道不可恢复时改走活跃上报」）：打开时改走活跃上报点亮连登，但**不发每日活跃积分**；普通 `401`（token 失效）与 `403 / 11140`（封禁）不降级。另新增 `wb_webcreate.py`（建会话请求形态矩阵）与 `scripts/probe_web_conversation.py`（read-only / probe / dry-run 排障脚本，探测时创建的会话会 stop+delete），用法见 [docs/TROUBLESHOOTING-10034.md](docs/TROUBLESHOOTING-10034.md)。2026-11-16 实测 probe 里 baseline 形态仍被上游接受，所以默认请求字节未变，只有失败时才换形状。 / The international daily activity's web conversation can now be refused by account type (`401` / `code 10034`: an OAuth-only account has no CODEBUDDY_API_KEY). The gateway tries once, stops spending the budget on retries and candidate models, writes no `lastDailyChat`, sets no ban flag and triggers no re-login, and reports the cause instead of an HTTP status. The existing off-by-default fallback switch now covers this refusal too (panel: "report activity when the web channel cannot recover"): it keeps the streak but **grants no daily activity credits**, and a plain `401` (stale token) or `403` / `11140` (ban) is never downgraded. New: `wb_webcreate.py` (request-shape matrix) and `scripts/probe_web_conversation.py` (read-only / probe / dry-run, releases the conversations it creates) — see [docs/TROUBLESHOOTING-10034.md](docs/TROUBLESHOOTING-10034.md). A 2026-11-16 probe found the baseline shape accepted, so the default request is byte-identical; shapes are only tried after a refusal.
 - **推送即构建镜像的 GitHub Actions**
