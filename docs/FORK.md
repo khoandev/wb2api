@@ -1,6 +1,6 @@
 # 本分支与上游的关系（维护者手册）
 
-本仓库是 [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) 的社区维护分支：
+本仓库是 [niyouqianma/workbuddy2api-hub](https://github.com/niyouqianma/workbuddy2api-hub)（早期镜像 [ardeyouxipianyi/workbuddy2api-hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)）的社区维护分支：
 上游代码原样跟随，本分支只在自己的函数 / 区块里追加功能，尽量不改上游正在频繁改动的行。
 
 ## 版本号
@@ -12,9 +12,11 @@
 ## 一次性设置
 
 ```bash
-git remote add upstream https://github.com/ardeyouxipianyi/workbuddy2api-hub.git
+git remote add upstream https://github.com/niyouqianma/workbuddy2api-hub.git
 git fetch upstream --no-tags
 ```
+
+`upstream` 取镜像 `niyouqianma/workbuddy2api-hub`（2026-11-20 起；原 `ardeyouxipianyi/workbuddy2api-hub` 仍是同一代码线的来源仓库）。
 
 ## 每次上游发版后的同步流程
 
@@ -36,6 +38,12 @@ python tests/run_all.py --jobs 4
 | `dashboard.html` | 上游改了同一处 CSS 与 `autoAssignSlots(this)` | 逐块取上游（本分支功能在别的区块） |
 | `tests/_test_mobile_account_layout.js` | add/add | 取上游断言 |
 | `README.md` | 徽章、维护状态、套件计数、changelog | 徽章与状态取新值；计数按 `ls tests/_test_*` 重算；changelog 分「合并上游」「本分支增强」两组都保留 |
+
+2026-11-20 同步上游 v2.1.3 → 46d62d0（8 个提交：网页工具网关、外部账号接口、11148 修复、积分首轮刷新），只有 `README.md` 一个文件冲突（套件计数、`### Unreleased`）：
+
+- 计数按 `ls tests/_test_*.py tests/_test_*.js` 重算后换成一行；
+- changelog 两侧条目**全部保留**在同一段 `### Unreleased`（上游在前、本分支在后），`### v2.2.0` 及更早段落不动。
+- 其余文件（`wb_proxy.py`、`wb_settings.py`、`wb_webtools.py`、`dashboard.html`、`release/portable.txt`）自动合并，版本号仍是本分支的 2.2.0。
 
 ## 冲突最少化的写法约定
 
